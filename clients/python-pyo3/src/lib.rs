@@ -29,6 +29,7 @@ use tensorzero_rust::{
 };
 use tokio::sync::Mutex;
 use url::Url;
+use mindsdb_sdk; // Importing MindsDB SDK
 
 mod python_helpers;
 
@@ -529,6 +530,23 @@ impl TensorZeroGateway {
             Err(e) => Err(convert_error(py, e)?),
         }
     }
+
+    /// Create and deploy a MindsDB model.
+    ///
+    /// :param mindsdb_url: The URL of the MindsDB instance.
+    /// :param model_name: The name of the MindsDB model to create.
+    /// :param training_data: The training data for the MindsDB model.
+    /// :return: The result from the MindsDB model creation.
+    fn create_mindsdb_model(
+        mindsdb_url: &str,
+        model_name: &str,
+        training_data: HashMap<String, Vec<f64>>,
+    ) -> PyResult<()> {
+        let client = mindsdb_sdk::Client::new(mindsdb_url)?;
+        let model = client.create_model(model_name, training_data)?;
+        model.deploy()?;
+        Ok(())
+    }
 }
 
 #[pyclass(extends=BaseTensorZeroGateway)]
@@ -657,7 +675,7 @@ impl AsyncTensorZeroGateway {
     /// :return: If stream is false, returns an InferenceResponse.
     ///          If stream is true, returns an async generator that yields InferenceChunks as they come in.
     fn inference<'a>(
-        this: PyRef<'_, Self>,
+        this: PyRef<'a, Self>,
         py: Python<'a>,
         input: Bound<'_, PyDict>,
         function_name: Option<String>,
@@ -755,6 +773,23 @@ impl AsyncTensorZeroGateway {
                 Err(e) => Err(convert_error(py, e)?),
             })
         })
+    }
+
+    /// Integrate MindsDB with TensorZero.
+    ///
+    /// :param mindsdb_url: The URL of the MindsDB instance.
+    /// :param model_name: The name of the MindsDB model to use.
+    /// :param input_data: The input data for the MindsDB model.
+    /// :return: The result from the MindsDB model.
+    async fn integrate_mindsdb(
+        mindsdb_url: &str,
+        model_name: &str,
+        input_data: HashMap<String, Vec<f64>>,
+    ) -> PyResult<HashMap<String, Vec<f64>>> {
+        let client = mindsdb_sdk::Client::new(mindsdb_url)?;
+        let model = client.get_model(model_name)?;
+        let result = model.predict(input_data)?;
+        Ok(result)
     }
 }
 

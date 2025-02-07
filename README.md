@@ -346,3 +346,67 @@ We are working on a series of **complete runnable examples** illustrating Tensor
 > This example shows how to optimize a TensorZero function using an arbitrary tool — here, DSPy.
 
 _& many more on the way!_
+
+## Integrating MindsDB with TensorZero
+
+To integrate MindsDB with TensorZero, follow these steps:
+
+1. Ensure you have both MindsDB and TensorZero installed and running.
+2. Use the `AsyncTensorZeroGateway` or `TensorZeroGateway` classes from the `tensorzero` Python package to interact with TensorZero.
+3. Create a MindsDB model and deploy it.
+4. Use the TensorZero client to send inference requests to the MindsDB model.
+
+## Creating a Virtual Environment and Installing Dependencies
+
+To create a virtual environment and install dependencies, follow these steps:
+
+1. Create a virtual environment using `venv`:
+
+```bash
+python -m venv venv
+```
+
+2. Activate the virtual environment:
+
+```bash
+# On Windows
+venv\Scripts\activate
+
+# On macOS and Linux
+source venv/bin/activate
+```
+
+3. Install the required dependencies using `pip`:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Setting Up the Gateway
+
+To set up the gateway using `AsyncTensorZeroGateway` or `TensorZeroGateway`, follow these steps:
+
+1. Use the `AsyncTensorZeroGateway` or `TensorZeroGateway` classes from the `tensorzero` Python package to interact with TensorZero.
+2. Ensure that the gateway is properly configured and running.
+
+## Automating the Build Process
+
+To automate the build process, follow these steps:
+
+1. Develop a script that automates the build process, including dependency installation, code compilation, testing, and deployment. You can use tools like `Makefile`, `shell scripts`, or CI/CD pipelines.
+2. Use continuous integration and continuous deployment (CI/CD) tools like GitHub Actions, Jenkins, or GitLab CI to automate the build process. You can find existing workflows in the `.github/workflows` directory, such as `.github/workflows/general.yml` and `.github/workflows/merge-queue.yml`.
+
+## Setting Up CI/CD Pipelines
+
+To set up CI/CD pipelines, follow these steps:
+
+1. Use continuous integration and continuous deployment (CI/CD) tools like GitHub Actions, Jenkins, or GitLab CI to automate the build process.
+2. You can find existing workflows in the `.github/workflows` directory, such as `.github/workflows/general.yml` and `.github/workflows/merge-queue.yml`.
+
+## Documenting the Process
+
+To document the process, you can add the instructions to the `README.md` file or create a separate `BUILD.md` file. This documentation should include:
+
+1. Instructions on how to run the build script.
+2. Dependencies required for the build process.
+3. Any other relevant information.

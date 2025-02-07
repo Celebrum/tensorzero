@@ -1,0 +1,7 @@
+{
+  "tasks": {
+    "build": "cargo build --workspace --verbose && uv venv && uv pip sync requirements.txt && pnpm install --frozen-lockfile",
+    "test": "cargo test-unit && cargo test-e2e && cd clients/python && uv venv && uv pip sync requirements.txt && uv run pytest && cd ../../ui && pnpm install && pnpm test",
+    "launch": "docker compose -f examples/production-deployment/docker-compose.yml up"
+  }
+}
