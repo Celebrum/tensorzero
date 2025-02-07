@@ -28,6 +28,10 @@ packaging==24.2
     # via pytest
 pluggy==1.5.0
     # via pytest
+pandas_sdk==0.1.0
+    # via -r requirements.in
+mindsdb_sdk==3.0.0
+    # via -r requirements.in
 pytest==8.3.4
     # via
     #   -r requirements.in

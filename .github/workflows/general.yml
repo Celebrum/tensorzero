@@ -143,3 +143,20 @@ jobs:
       - name: Run ui tests
         working-directory: ui
         run: TENSORZERO_CLICKHOUSE_URL=http://localhost:8123/tensorzero_ui_fixtures pnpm test
+
+      - name: Create virtual environment and install dependencies
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Set up the gateway and integrate MindsDB
+        run: |
+          python -m tensorzero.gateway
+          python -m mindsdb
+
+      - name: Automate the build process and set up CI/CD pipelines
+        run: |
+          make build
+          make test
+          make deploy

@@ -103,7 +103,7 @@ cargo test-unit
 1. Launch the test ClickHouse database
 
    ```bash
-   docker compose -f tensorzero_internal/tests/e2e/docker-compose.yml up --wait
+   docker compose -f tensorzero-internal/tests/e2e/docker-compose.yml up --wait
    ```
 
 2. Set the relevant environment variables. See `examples/production-deployment/.env.example` for the full list.
@@ -189,5 +189,21 @@ With the dependencies running, you can run the tests with `pnpm run test`.
 Similarly, you can start a development server with `pnpm run dev`.
 
 ---
+
+## Automation Patterns
+
+To streamline the contribution process, we have identified some patterns that can help automate repetitive tasks. These patterns leverage tools like GitHub Copilot, CI/CD pipelines, and automated testing frameworks.
+
+### Using GitHub Copilot
+
+GitHub Copilot can assist in writing and optimizing code by providing code suggestions and completing code snippets. It can help automate repetitive tasks and improve code quality.
+
+### Setting Up CI/CD Pipelines
+
+Continuous Integration and Continuous Deployment (CI/CD) pipelines can automate the build, test, and deployment processes. This ensures that code changes are automatically tested and deployed, reducing the risk of errors and improving the overall development workflow.
+
+1. **Create a CI/CD pipeline**: Use tools like GitHub Actions, Jenkins, or GitLab CI to create a pipeline that automates the build, test, and deployment processes.
+2. **Automate testing**: Include automated tests in the pipeline to ensure that code changes do not introduce new bugs or issues.
+3. **Automate deployment**: Configure the pipeline to automatically deploy code changes to the appropriate environment (e.g., staging, production) after passing all tests.
 
 Thanks again for your interest in contributing to TensorZero! We're excited to see what you build.
