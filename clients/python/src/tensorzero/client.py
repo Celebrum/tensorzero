@@ -40,6 +40,7 @@ from urllib.parse import urljoin
 from uuid import UUID
 
 import httpx
+import mindsdb_sdk
 
 from .types import (
     FeedbackResponse,
@@ -527,3 +528,17 @@ class AsyncTensorZeroGateway(BaseTensorZeroGateway):
                         yield parse_inference_chunk(parsed_data)
                     except json.JSONDecodeError:
                         self.logger.error(f"Failed to parse SSE data: {event_data}")
+
+    async def integrate_mindsdb(self, mindsdb_url: str, model_name: str, input_data: Dict[str, Any]) -> Any:
+        """
+        Integrate MindsDB with TensorZero.
+
+        :param mindsdb_url: The URL of the MindsDB instance.
+        :param model_name: The name of the MindsDB model to use.
+        :param input_data: The input data for the MindsDB model.
+        :return: The result from the MindsDB model.
+        """
+        async with mindsdb_sdk.Client(mindsdb_url) as mindsdb_client:
+            model = mindsdb_client.get_model(model_name)
+            result = await model.predict(input_data)
+            return result
