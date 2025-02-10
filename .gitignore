@@ -17,6 +17,12 @@ target/
 .DS_Store
 .credentials/
 
+# Sensitive information
+docker-compose.yml
+docker-compose.*.yml
+*.token
+.pypirc
+
 # Python cache files
 __pycache__/
 *.py[cod]
