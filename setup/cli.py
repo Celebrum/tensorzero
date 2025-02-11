@@ -5,6 +5,10 @@ import param
 import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
+import click
+import yaml
+from .model_env_manager import ModelEnvironmentManager
+from .init_model_env import init_model_environment, validate_environment
 
 class ModelConfig(param.Parameterized):
     architecture = param.String(default="x10 -> Linear(20) -> ReLU -> Linear(1)", doc="Model architecture")
@@ -76,15 +80,65 @@ def create_ui():
         submit_button
     )
 
-def main():
-    """Main entry point"""
+@click.group()
+def cli():
+    """TensorZero model environment management CLI"""
+    pass
+
+@cli.command()
+@click.argument('model_name')
+@click.option('--architecture', '-a', help='Model architecture description')
+@click.option('--gpu/--no-gpu', default=False, help='Whether GPU support is required')
+@click.option('--model-size', type=click.Choice(['small', 'medium', 'large']), default='small')
+def create(model_name, architecture, gpu, model_size):
+    """Create a new model environment"""
+    env_manager = ModelEnvironmentManager()
     try:
-        setup_environment()
-        ui = create_ui()
-        ui.show()
+        env_name = env_manager.create_model_environment(
+            model_name,
+            {
+                "architecture": architecture,
+                "gpu_required": gpu,
+                "model_size": model_size
+            }
+        )
+        click.echo(f"Created environment: {env_name}")
     except Exception as e:
-        print(f"Error during setup: {e}")
-        sys.exit(1)
+        click.echo(f"Error creating environment: {e}", err=True)
+
+@cli.command()
+@click.argument('model_name')
+def activate(model_name):
+    """Activate an existing model environment"""
+    env_manager = ModelEnvironmentManager()
+    try:
+        env_manager.activate_model_environment(model_name)
+        click.echo(f"Activated environment for model: {model_name}")
+    except Exception as e:
+        click.echo(f"Error activating environment: {e}", err=True)
+
+@cli.command()
+@click.argument('model_name')
+def cleanup(model_name):
+    """Remove a model environment"""
+    env_manager = ModelEnvironmentManager()
+    try:
+        env_manager.cleanup_environment(model_name)
+        click.echo(f"Cleaned up environment for model: {model_name}")
+    except Exception as e:
+        click.echo(f"Error cleaning up environment: {e}", err=True)
+
+@cli.command()
+def list_envs():
+    """List all TensorZero model environments"""
+    result = subprocess.run(["conda", "env", "list"], capture_output=True, text=True)
+    envs = [line for line in result.stdout.split('\n') if 'tensorzero_' in line]
+    click.echo("TensorZero Model Environments:")
+    for env in envs:
+        click.echo(f"  {env}")
+
+def main():
+    cli()
 
 if __name__ == "__main__":
     main()
