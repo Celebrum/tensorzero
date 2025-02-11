@@ -1,83 +1,69 @@
 """
-TensorZero Intelligence Injection Framework
-Core Flywheel Pattern Implementation
+TensorZero Simple Time Series Forecasting
+Using MindsDB Auto-build and Pattern Recognition
 """
 
-from typing import Dict, Any, Optional
-import torch
+from typing import Dict, Any, List
 import numpy as np
 from mindsdb_sdk import MindsDB
+from datetime import datetime, timedelta
 
-class FlywheelEngine:
+class TimeSeriesEngine:
     def __init__(self, config: Dict[str, Any]):
-        self.memory_size = config.get("memory_size", 1000)
-        self.intelligence_factor = config.get("intelligence_factor", 0.5)
+        """Initialize with MindsDB connection and basic settings"""
         self.mindsdb = MindsDB(config.get("mindsdb_url", "http://localhost:47334"))
-        self.pattern_memory = []
+        self.history_window = config.get("history_window", 30)
+        self.forecast_horizon = config.get("forecast_horizon", 7)
         
-    async def inject_intelligence(self, 
-                                model_name: str,
-                                input_data: torch.Tensor) -> Dict[str, Any]:
-        """Enhance model predictions with pattern memory"""
-        model = self.mindsdb.get_model(model_name)
-        base_prediction = await model.predict(input_data.numpy())
-        
-        # Apply pattern recognition
-        pattern_enhanced = self._enhance_with_patterns(
-            base_prediction["prediction"],
-            self.intelligence_factor
-        )
-        
-        # Update pattern memory
-        self._update_memory(input_data, pattern_enhanced)
-        
-        return {
-            "base_prediction": base_prediction["prediction"],
-            "enhanced_prediction": pattern_enhanced,
-            "certainty": self._compute_certainty(pattern_enhanced)
-        }
-        
-    def _enhance_with_patterns(self, 
-                             prediction: np.ndarray,
-                             factor: float) -> np.ndarray:
-        """Apply pattern-based enhancement"""
-        if not self.pattern_memory:
-            return prediction
+    async def create_forecaster(self, 
+                              name: str,
+                              data: List[Dict[str, Any]],
+                              target_column: str) -> str:
+        """Auto-build a time series model"""
+        try:
+            # Validate data format
+            if not all('timestamp' in x and target_column in x for x in data):
+                raise ValueError("Data must contain 'timestamp' and target column")
+                
+            # Create and train model
+            model = await self.mindsdb.create_model(
+                name=name,
+                predict=target_column,
+                training_data=data,
+                options={
+                    'model_type': 'time_series',
+                    'window': self.history_window,
+                    'horizon': self.forecast_horizon
+                }
+            )
+            return f"Model {name} created successfully"
             
-        # Find similar patterns
-        similarities = []
-        for pattern in self.pattern_memory:
-            distance = np.linalg.norm(pattern - prediction)
-            similarity = 1 / (1 + distance)
-            similarities.append(similarity)
+        except Exception as e:
+            return f"Error creating model: {str(e)}"
+    
+    async def predict(self,
+                     model_name: str,
+                     latest_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate time series forecast"""
+        try:
+            model = self.mindsdb.get_model(model_name)
             
-        # Weight patterns by similarity
-        weights = np.array(similarities) / sum(similarities)
-        patterns = np.stack(self.pattern_memory)
-        
-        # Combine predictions
-        enhanced = ((1 - factor) * prediction + 
-                   factor * np.average(patterns, weights=weights))
-        return enhanced
-        
-    def _update_memory(self, 
-                      input_data: torch.Tensor,
-                      prediction: np.ndarray):
-        """Update pattern memory"""
-        self.pattern_memory.append(prediction)
-        if len(self.pattern_memory) > self.memory_size:
-            self.pattern_memory.pop(0)
+            # Make prediction
+            prediction = await model.predict(latest_data)
             
-    def _compute_certainty(self, prediction: np.ndarray) -> float:
-        """Compute prediction certainty"""
-        if not self.pattern_memory:
-            return 0.5
+            # Enhance prediction with simple smoothing
+            enhanced = self._smooth_prediction(prediction["prediction"])
             
-        # Use pattern consistency for certainty
-        similarities = []
-        for pattern in self.pattern_memory[-5:]:
-            distance = np.linalg.norm(pattern - prediction)
-            similarity = 1 / (1 + distance)
-            similarities.append(similarity)
+            return {
+                "forecast": enhanced,
+                "confidence": prediction.get("confidence", 0.0),
+                "horizon": self.forecast_horizon
+            }
             
-        return float(np.mean(similarities))
+        except Exception as e:
+            return {"error": str(e)}
+    
+    def _smooth_prediction(self, prediction: np.ndarray) -> np.ndarray:
+        """Apply simple moving average smoothing"""
+        window = min(3, len(prediction))
+        return np.convolve(prediction, np.ones(window)/window, mode='valid')
