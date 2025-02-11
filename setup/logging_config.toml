@@ -1,0 +1,25 @@
+[general]
+log_path = "C:/ProgramData/TensorZero/logs"
+max_size = "10MB"
+backup_count = 5
+log_level = "INFO"
+
+[security]
+audit_log = true
+audit_path = "C:/ProgramData/TensorZero/logs/security_audit.log"
+alert_on_failure = true
+
+[installation]
+track_progress = true
+verify_checksums = true
+backup_config = true
+
+[network]
+monitor_ports = [3000, 3001]
+allowed_ips = ["10.0.0.1/24"]
+log_connections = true
+
+[environment]
+track_conda = true
+track_cargo = true
+verify_dependencies = true

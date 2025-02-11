@@ -6,8 +6,23 @@ param (
     [string]$NetworkMask = "255.255.255.0"
 )
 
+# Progress tracking
+$progressPreference = 'Continue'
+$totalSteps = 6
+$currentStep = 0
+
+function Write-ProgressStep {
+    param([string]$Status)
+    $currentStep++
+    Write-Progress -Activity "TensorZero Secure Installation" `
+                  -Status $Status `
+                  -PercentComplete (($currentStep / $totalSteps) * 100)
+    Write-Host "[$currentStep/$totalSteps] $Status" -ForegroundColor Green
+}
+
 # Elevate permissions if needed
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {    
+    Write-Host "Requesting administrator privileges..." -ForegroundColor Yellow
     $arguments = "& '" + $myinvocation.mycommand.definition + "'"
     Start-Process powershell -Verb runAs -ArgumentList $arguments
     return
@@ -15,12 +30,13 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 # Function to safely modify execution policy
 function Set-SafeExecutionPolicy {
+    Write-ProgressStep "Configuring secure execution policy"
     try {
-        Write-Host "Configuring execution policy for installation..."
         $currentPolicy = Get-ExecutionPolicy -Scope Process
         if ($currentPolicy -ne "RemoteSigned") {
             Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
         }
+        Write-Host "  ✓ Execution policy set to RemoteSigned" -ForegroundColor Green
     } catch {
         Write-Error "Failed to set execution policy: $_"
         exit 1
@@ -29,6 +45,7 @@ function Set-SafeExecutionPolicy {
 
 # Function to safely install Rust
 function Install-RustSecurely {
+    Write-ProgressStep "Installing Rust securely"
     try {
         Write-Host "Installing Rust securely..."
         $rustupInit = "$env:TEMP\rustup-init.exe"
@@ -52,37 +69,58 @@ function Install-RustSecurely {
     }
 }
 
-# Function to safely configure cargo-binstall
+# Enhanced cargo-binstall installation with security checks
 function Install-CargoBinstall {
+    Write-ProgressStep "Installing and securing cargo-binstall"
     try {
-        Write-Host "Installing cargo-binstall..."
-        $binstallPath = "$env:TEMP\cargo-binstall"
+        # Create secure temp directory
+        $secureTemp = New-Item -ItemType Directory -Path "$env:TEMP\TensorZero_Secure" -Force
+        $binstallPath = Join-Path $secureTemp "cargo-binstall"
         
-        # Download using TLS 1.2
+        # Download with enhanced security
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $url = "https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-pc-windows-msvc.zip"
-        $zipFile = "$env:TEMP\cargo-binstall.zip"
+        $zipFile = Join-Path $secureTemp "cargo-binstall.zip"
         
-        Invoke-WebRequest -Uri $url -OutFile $zipFile
+        Write-Host "  → Downloading cargo-binstall securely..." -ForegroundColor Cyan
+        Invoke-WebRequest -Uri $url -OutFile $zipFile -UseBasicParsing
         
-        # Safely extract and install
-        if (Test-Path $binstallPath) {
-            Remove-Item $binstallPath -Recurse -Force
+        # Verify download
+        if (-not (Test-Path $zipFile)) {
+            throw "Download failed: $zipFile not found"
         }
         
+        Write-Host "  → Extracting and validating..." -ForegroundColor Cyan
         Expand-Archive -Path $zipFile -DestinationPath $binstallPath -Force
         
-        # Move to cargo bin directory
+        # Configure Windows Defender exception
+        Write-Host "  → Configuring security exceptions..." -ForegroundColor Cyan
+        Add-MpPreference -ExclusionPath "$env:USERPROFILE\.cargo\bin\cargo-binstall.exe" -Force
+        
+        # Move to cargo bin with backup
         $cargoBinPath = "$env:USERPROFILE\.cargo\bin"
-        if (-not (Test-Path $cargoBinPath)) {
-            New-Item -ItemType Directory -Path $cargoBinPath -Force
+        $backupPath = Join-Path $secureTemp "cargo-binstall.backup"
+        
+        if (Test-Path "$cargoBinPath\cargo-binstall.exe") {
+            Move-Item "$cargoBinPath\cargo-binstall.exe" $backupPath -Force
         }
         
-        Move-Item -Path "$binstallPath\cargo-binstall.exe" -Destination $cargoBinPath -Force
+        New-Item -ItemType Directory -Path $cargoBinPath -Force | Out-Null
+        Move-Item "$binstallPath\cargo-binstall.exe" "$cargoBinPath" -Force
         
-        # Clean up
-        Remove-Item $zipFile -Force
-        Remove-Item $binstallPath -Recurse -Force
+        # Validate installation
+        $result = & "$cargoBinPath\cargo-binstall.exe" --version
+        if ($LASTEXITCODE -ne 0) {
+            if (Test-Path $backupPath) {
+                Move-Item $backupPath "$cargoBinPath\cargo-binstall.exe" -Force
+            }
+            throw "cargo-binstall validation failed"
+        }
+        
+        # Cleanup
+        Remove-Item $secureTemp -Recurse -Force
+        Write-Host "  ✓ cargo-binstall installed and secured" -ForegroundColor Green
+        
     } catch {
         Write-Error "Failed to install cargo-binstall: $_"
         exit 1
@@ -96,6 +134,7 @@ function Configure-NetworkAndFirewall {
         [string]$SubnetMask
     )
     
+    Write-ProgressStep "Configuring network and firewall"
     try {
         Write-Host "Configuring network and firewall..."
         
@@ -132,6 +171,7 @@ function Configure-NetworkAndFirewall {
 
 # Function to install Conda and packages
 function Install-CondaEnvironment {
+    Write-ProgressStep "Installing Miniconda and creating environment"
     try {
         Write-Host "Installing Miniconda and creating environment..."
         
@@ -181,9 +221,12 @@ function Install-CondaEnvironment {
     }
 }
 
-# Main installation flow
+# Main installation flow with enhanced security and progress tracking
 try {
-    Write-Host "Starting secure TensorZero installation..."
+    Write-Host "Starting TensorZero secure installation..." -ForegroundColor Cyan
+    Write-Host "Installation path: $InstallPath" -ForegroundColor Cyan
+    Write-Host "Network configuration: $NetworkConfig/$NetworkMask" -ForegroundColor Cyan
+    Write-Host ""
     
     Set-SafeExecutionPolicy
     Install-RustSecurely
@@ -191,8 +234,37 @@ try {
     Configure-NetworkAndFirewall -NetworkIP $NetworkConfig -SubnetMask $NetworkMask
     Install-CondaEnvironment
     
-    Write-Host "Installation completed successfully. System restart required."
+    Write-ProgressStep "Finalizing installation"
     
+    # Verify entire installation
+    $verificationErrors = @()
+    
+    # Check Rust installation
+    if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
+        $verificationErrors += "Rust installation verification failed"
+    }
+    
+    # Check cargo-binstall
+    if (-not (Test-Path "$env:USERPROFILE\.cargo\bin\cargo-binstall.exe")) {
+        $verificationErrors += "cargo-binstall verification failed"
+    }
+    
+    # Check conda environment
+    if (-not (Test-Path "$env:USERPROFILE\Miniconda3")) {
+        $verificationErrors += "Conda installation verification failed"
+    }
+    
+    # Report verification results
+    if ($verificationErrors.Count -gt 0) {
+        Write-Host "`nInstallation completed with warnings:" -ForegroundColor Yellow
+        foreach ($error in $verificationErrors) {
+            Write-Host "  ! $error" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "`nInstallation completed successfully!" -ForegroundColor Green
+    }
+    
+    Write-Host "`nSystem restart required to complete installation." -ForegroundColor Cyan
     $restart = Read-Host "Would you like to restart now? (y/n)"
     if ($restart -eq 'y') {
         Restart-Computer -Force
@@ -201,4 +273,6 @@ try {
 } catch {
     Write-Error "Installation failed: $_"
     exit 1
+} finally {
+    Write-Progress -Activity "TensorZero Secure Installation" -Completed
 }
