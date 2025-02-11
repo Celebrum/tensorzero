@@ -1,0 +1,26 @@
+Windows Registry Editor Version 5.00
+
+; TensorZero Security Configuration
+[HKEY_LOCAL_MACHINE\SOFTWARE\TensorZero]
+"InstallPath"="C:\\Program Files\\TensorZero"
+"SecurityLevel"="Enhanced"
+"NetworkEnabled"=dword:00000001
+
+; Configure Windows Defender exception for cargo-binstall
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths]
+"C:\\Users\\*\\.cargo\\bin\\cargo-binstall.exe"=hex:01,00,00,00
+
+; Configure Windows Firewall Rules
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules]
+"TensorZero-Gateway-In"="v2.31|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=3000|Name=TensorZero Gateway|Desc=TensorZero Gateway incoming connections|EmbedCtxt=TensorZero|"
+"TensorZero-Flywheel-In"="v2.31|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=3001|Name=TensorZero Flywheel|Desc=TensorZero Flywheel incoming connections|EmbedCtxt=TensorZero|"
+
+; Configure Network Settings
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces]
+"IPAddress"="10.0.0.1"
+"SubnetMask"="255.255.255.0"
+"EnableDHCP"=dword:00000000
+
+; PowerShell Execution Policy for TensorZero
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell]
+"ExecutionPolicy"="RemoteSigned"
