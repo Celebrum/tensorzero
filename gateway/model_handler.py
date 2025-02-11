@@ -10,9 +10,9 @@ from enum import Enum
 class FlywheelConfig:
     """Configuration for intelligence injection via flywheel pattern"""
     learning_rate: float = 0.01
-    memory_size: int = 1000
-    intelligence_factor: float = 0.5
-    use_memory: bool = True
+    memory_size: int = 1000  # How many previous inferences to remember
+    intelligence_factor: float = 0.5  # How much to weight learned patterns
+    use_memory: bool = True  # Whether to use memory for intelligence
 
 class ExecutionMode(Enum):
     SYNC = "sync"
@@ -23,11 +23,125 @@ class ExecutionMode(Enum):
 class ModelConfig:
     name: str
     architecture: str
-    params: Dict[str, Any]  
+    params: Dict[str, Any]
     execution_mode: ExecutionMode = ExecutionMode.SYNC
     flywheel: Optional[FlywheelConfig] = None
 
-# ...existing DynamicModel class...
+class DynamicModel(nn.Module):
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.config = config
+        self.layers = nn.ModuleList()
+        self._build_architecture()
+        self.memory = [] if config.flywheel else None
+        
+    def _build_architecture(self):
+        """Dynamically build model architecture based on config"""
+        arch_parts = self.config.architecture.split("->")
+        in_features = None
+        
+        for part in arch_parts:
+            part = part.strip()
+            if "x" in part:  # For input layer specification
+                in_features = int(part.split("x")[1])
+                continue
+                
+            if part.startswith("Linear"):
+                out_features = int(part.split("(")[1].rstrip(")"))
+                if in_features is None:
+                    raise ValueError("Input features not specified")
+                self.layers.append(nn.Linear(in_features, out_features))
+                in_features = out_features
+            elif part == "ReLU":
+                self.layers.append(nn.ReLU())
+            elif part == "Tanh":
+                self.layers.append(nn.Tanh())
+            elif part == "Sigmoid":
+                self.layers.append(nn.Sigmoid())
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Basic forward pass
+        for layer in self.layers:
+            x = layer(x)
+            
+        # Apply intelligence injection if using flywheel
+        if self.config.flywheel and self.config.flywheel.use_memory:
+            x = self._apply_intelligence(x)
+            
+        return x
+    
+    def _apply_intelligence(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply learned patterns from memory to current output"""
+        if not self.memory:
+            self.memory.append(x.detach())
+            return x
+            
+        # Calculate influence from memory
+        memory_tensor = torch.stack(self.memory[-self.config.flywheel.memory_size:])
+        memory_influence = torch.mean(memory_tensor, dim=0)
+        
+        # Combine current output with memory influence
+        intelligence_factor = self.config.flywheel.intelligence_factor
+        enhanced_output = (1 - intelligence_factor) * x + intelligence_factor * memory_influence
+        
+        # Update memory
+        self.memory.append(x.detach())
+        if len(self.memory) > self.config.flywheel.memory_size:
+            self.memory.pop(0)
+            
+        return enhanced_output
 
 class ModelHandler:
-    # ...existing ModelHandler class...
+    def __init__(self):
+        self.models: Dict[str, DynamicModel] = {}
+    
+    def create_model(self, config: ModelConfig) -> DynamicModel:
+        """Create a new model from config"""
+        model = DynamicModel(config)
+        self.models[config.name] = model
+        return model
+    
+    async def _run_async(self, model: DynamicModel, input_data: torch.Tensor) -> torch.Tensor:
+        """Run model asynchronously"""
+        return await asyncio.to_thread(model.forward, input_data)
+    
+    async def _run_parallel(self, model: DynamicModel, input_data: List[torch.Tensor]) -> List[torch.Tensor]:
+        """Run model in parallel for multiple inputs"""
+        tasks = [self._run_async(model, x) for x in input_data]
+        return await asyncio.gather(*tasks)
+    
+    async def run_model(
+        self, 
+        model_name: str, 
+        input_data: Union[torch.Tensor, List[torch.Tensor]]
+    ) -> Union[torch.Tensor, List[torch.Tensor]]:
+        """Run model with specified execution mode"""
+        if model_name not in self.models:
+            raise ValueError(f"Model {model_name} not found")
+            
+        model = self.models[model_name]
+        mode = model.config.execution_mode
+        
+        if mode == ExecutionMode.SYNC:
+            return model(input_data)
+            
+        elif mode == ExecutionMode.ASYNC:
+            return await self._run_async(model, input_data)
+            
+        elif mode == ExecutionMode.PARALLEL:
+            if not isinstance(input_data, list):
+                raise ValueError("Parallel mode requires list of inputs")
+            return await self._run_parallel(model, input_data)
+
+    def get_flywheel_vars(self, model_name: str) -> Optional[Dict[str, Any]]:
+        """Get current flywheel variables for a model"""
+        if model_name not in self.models:
+            return None
+        model = self.models[model_name]
+        if not model.config.flywheel:
+            return None
+        return {
+            "memory_size": len(model.memory) if model.memory else 0,
+            "intelligence_factor": model.config.flywheel.intelligence_factor,
+            "learning_enabled": model.config.flywheel.use_memory
+        }
