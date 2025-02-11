@@ -1,71 +1,90 @@
 from enum import Enum
 from typing import Dict, Any, Optional, Union
-import docker
-import grpc
-from tensorzero.gateway import ModelHandler, FlywheelConfig
+import torch
+import numpy as np
+from tensorzero.gateway import ModelHandler, FlywheelConfig, ModelConfig
 
 class GatewayMode(Enum):
     SIMPLE = "simple"
     EXPERT = "expert"
     HYBRID = "hybrid"
 
-class ContainerManager:
-    def __init__(self, registry_url: str = "localhost:5000"):
-        self.docker_client = docker.from_env()
-        self.registry_url = registry_url
-        self.user_containers: Dict[str, Any] = {}
-        self.shared_memory = {}
+class PatternRecognition:
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.pattern_memory = []
+        self.confidence_threshold = config["pattern_recognition"]["minimum_confidence"]
         
-    async def start_user_container(self, container_config: Dict[str, Any]) -> str:
-        """Start a user's custom container and connect it to the gateway"""
-        container = self.docker_client.containers.run(
-            image=f"{self.registry_url}/{container_config['image']}",
-            name=f"user-container-{container_config['id']}",
-            network="tensorzero_network",
-            environment={
-                "FLYWHEEL_ENDPOINT": "http://gateway:3000/flywheel",
-                "CONTAINER_ID": container_config['id']
-            },
-            volumes={
-                "tensorzero_shared": {"bind": "/shared", "mode": "rw"}
-            },
-            detach=True
-        )
-        self.user_containers[container_config['id']] = container
-        return container.id
-
-    async def stop_user_container(self, container_id: str):
-        """Stop and remove a user container"""
-        if container_id in self.user_containers:
-            container = self.user_containers[container_id]
-            container.stop()
-            container.remove()
-            del self.user_containers[container_id]
+    def detect_pattern(self, data: torch.Tensor) -> Optional[Dict[str, Any]]:
+        """Detect patterns in input data"""
+        if len(self.pattern_memory) < 10:
+            self.pattern_memory.append(data.detach())
+            return None
+            
+        # Stack recent memory for pattern analysis
+        memory_tensor = torch.stack(self.pattern_memory[-10:])
+        
+        # Check for sine patterns
+        if self.config["pattern_recognition"]["enable_sine_detection"]:
+            sine_conf = self._check_sine_pattern(memory_tensor)
+            if sine_conf > self.confidence_threshold:
+                return {"type": "sine", "confidence": sine_conf}
+                
+        # Check for linear patterns
+        if self.config["pattern_recognition"]["enable_linear_detection"]:
+            linear_conf = self._check_linear_pattern(memory_tensor)
+            if linear_conf > self.confidence_threshold:
+                return {"type": "linear", "confidence": linear_conf}
+                
+        return None
+        
+    def _check_sine_pattern(self, data: torch.Tensor) -> float:
+        """Check for sinusoidal patterns in data"""
+        # Simple FFT-based sine pattern detection
+        fft = torch.fft.fft(data)
+        freqs = fft.abs()
+        peak_freq = torch.argmax(freqs[1:], dim=0)  # Skip DC component
+        
+        # Check if peak frequency dominates
+        total_power = torch.sum(freqs[1:], dim=0)
+        peak_power = freqs[peak_freq + 1]
+        return (peak_power / total_power).mean().item()
+        
+    def _check_linear_pattern(self, data: torch.Tensor) -> float:
+        """Check for linear patterns in data"""
+        x = torch.arange(len(data)).float()
+        x_mean = x.mean()
+        y_mean = data.mean(dim=0)
+        
+        # Calculate R² score
+        numerator = torch.sum((x.unsqueeze(1) - x_mean) * (data - y_mean), dim=0)
+        denominator = torch.sqrt(torch.sum((x.unsqueeze(1) - x_mean)**2, dim=0) * 
+                               torch.sum((data - y_mean)**2, dim=0))
+        r2 = (numerator / denominator)**2
+        
+        return r2.mean().item()
 
 class DualModeGateway:
     def __init__(self, config_path: str):
         self.model_handler = ModelHandler()
-        self.container_manager = ContainerManager()
         self.mode = GatewayMode.HYBRID
         self.load_config(config_path)
+        self.pattern_recognition = PatternRecognition(self.config)
         
     async def create_model(
         self, 
         name: str, 
         mode: GatewayMode,
-        config: Optional[Dict[str, Any]] = None,
-        container_config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None
     ):
         """Create model in either simple or expert mode"""
         if mode == GatewayMode.SIMPLE:
-            # Simple mode - use built-in architecture
             return await self._create_simple_model(name, config)
         else:
-            # Expert mode - support custom container
-            return await self._create_expert_model(name, config, container_config)
+            return await self._create_expert_model(name, config)
 
     async def _create_simple_model(self, name: str, config: Optional[Dict[str, Any]]):
-        """Create a simple model for beginners"""
+        """Create a simple model with automatic pattern detection"""
         if config is None:
             config = {
                 "architecture": self.config["simple_mode"]["default_architecture"],
@@ -79,7 +98,8 @@ class DualModeGateway:
             flywheel=FlywheelConfig(
                 learning_rate=0.01,
                 memory_size=self.config["flywheel"]["memory_size"],
-                intelligence_factor=self.config["flywheel"]["intelligence_factor"]
+                intelligence_factor=self.config["flywheel"]["intelligence_factor"],
+                pattern_recognition=True if self.config["simple_mode"]["auto_pattern_detection"] else False
             )
         )
         return self.model_handler.create_model(model_config)
@@ -87,22 +107,9 @@ class DualModeGateway:
     async def _create_expert_model(
         self, 
         name: str, 
-        config: Dict[str, Any],
-        container_config: Optional[Dict[str, Any]]
+        config: Dict[str, Any]
     ):
-        """Create an expert model with custom container support"""
-        if container_config:
-            # Start user's custom container
-            container_id = await self.container_manager.start_user_container(container_config)
-            
-            # Register container in flywheel memory
-            self.container_manager.shared_memory[name] = {
-                "container_id": container_id,
-                "config": config,
-                "memory": []
-            }
-        
-        # Create base model that will interface with custom container
+        """Create an expert model with advanced pattern recognition"""
         model_config = ModelConfig(
             name=name,
             architecture=config["architecture"],
@@ -111,7 +118,8 @@ class DualModeGateway:
                 learning_rate=config.get("learning_rate", 0.01),
                 memory_size=self.config["flywheel"]["memory_size"],
                 intelligence_factor=self.config["flywheel"]["intelligence_factor"],
-                use_memory=True
+                pattern_recognition=self.config["expert_mode"]["enable_advanced_patterns"],
+                pattern_memory_size=self.config["pattern_recognition"]["pattern_memory_size"]
             )
         )
         return self.model_handler.create_model(model_config)
@@ -119,48 +127,34 @@ class DualModeGateway:
     async def inference(
         self,
         model_name: str,
-        input_data: Any,
-        use_container: bool = False
-    ) -> Any:
-        """Run inference in either mode"""
-        if use_container and model_name in self.container_manager.shared_memory:
-            # Route to custom container
-            return await self._container_inference(model_name, input_data)
-        else:
-            # Use built-in model
-            return await self.model_handler.run_model(model_name, input_data)
+        input_data: torch.Tensor
+    ) -> torch.Tensor:
+        """Run inference with pattern recognition"""
+        # Convert input to tensor if needed
+        if not isinstance(input_data, torch.Tensor):
+            input_data = torch.tensor(input_data)
+            
+        # Detect patterns in input
+        pattern = self.pattern_recognition.detect_pattern(input_data)
+        
+        # Run model inference
+        result = await self.model_handler.run_model(model_name, input_data)
+        
+        # Apply pattern-based optimization if detected
+        if pattern and self.config["knowledge_sharing"]["pattern_propagation"]:
+            if pattern["type"] == "sine":
+                result = self._enhance_periodic_pattern(result, pattern["confidence"])
+            elif pattern["type"] == "linear":
+                result = self._enhance_linear_pattern(result, pattern["confidence"])
+                
+        return result
+        
+    def _enhance_periodic_pattern(self, output: torch.Tensor, confidence: float) -> torch.Tensor:
+        """Enhance periodic patterns in output"""
+        # Implementation of periodic pattern enhancement
+        pass
 
-    async def _container_inference(self, model_name: str, input_data: Any) -> Any:
-        """Run inference through user's custom container"""
-        container_info = self.container_manager.shared_memory[model_name]
-        container = self.user_containers[container_info["container_id"]]
-        
-        # Send inference request to container
-        response = await self._send_container_request(
-            container,
-            "inference",
-            {
-                "input": input_data,
-                "model": model_name,
-                "flywheel_memory": container_info["memory"][-100:]  # Last 100 memories
-            }
-        )
-        
-        # Update flywheel memory with container's output
-        if response.get("update_memory", False):
-            container_info["memory"].append(response["memory_update"])
-            if len(container_info["memory"]) > self.config["flywheel"]["memory_size"]:
-                container_info["memory"].pop(0)
-        
-        return response["output"]
-
-    async def _send_container_request(
-        self,
-        container: Any,
-        request_type: str,
-        data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Send GRPC request to user container"""
-        # Implementation of container communication
-        # This would use GRPC to communicate with user containers
+    def _enhance_linear_pattern(self, output: torch.Tensor, confidence: float) -> torch.Tensor:
+        """Enhance linear patterns in output"""
+        # Implementation of linear pattern enhancement
         pass

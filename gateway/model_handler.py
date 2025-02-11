@@ -1,4 +1,3 @@
-# Moving contents from mindsdb_gateway.py to model_handler.py
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List, Union
 import torch
@@ -6,13 +5,23 @@ import torch.nn as nn
 import asyncio
 from enum import Enum
 
-@dataclass 
+#######################
+# Configuration Classes
+#######################
+
+@dataclass
 class FlywheelConfig:
     """Configuration for intelligence injection via flywheel pattern"""
     learning_rate: float = 0.01
-    memory_size: int = 1000  # How many previous inferences to remember
-    intelligence_factor: float = 0.5  # How much to weight learned patterns
-    use_memory: bool = True  # Whether to use memory for intelligence
+    memory_size: int = 100
+    intelligence_factor: float = 0.3
+    use_memory: bool = True  # Added use_memory flag
+    pattern_recognition: bool = False
+    pattern_memory_size: Optional[int] = None
+
+    def __post_init__(self):
+        if self.pattern_recognition and self.pattern_memory_size is None:
+            self.pattern_memory_size = self.memory_size
 
 class ExecutionMode(Enum):
     SYNC = "sync"
@@ -21,44 +30,66 @@ class ExecutionMode(Enum):
 
 @dataclass
 class ModelConfig:
+    """Configuration for TensorZero model"""
     name: str
     architecture: str
     params: Dict[str, Any]
     execution_mode: ExecutionMode = ExecutionMode.SYNC
     flywheel: Optional[FlywheelConfig] = None
+    use_mindsdb: bool = False
+    mindsdb_config: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        if self.use_mindsdb and not self.mindsdb_config:
+            self.mindsdb_config = {
+                "host": "localhost",
+                "port": 47334
+            }
+        if self.use_mindsdb and not self.flywheel:
+            # Enable intelligence injection by default for MindsDB integration
+            self.flywheel = FlywheelConfig()
+
+########################
+# Model Implementation
+########################
 
 class DynamicModel(nn.Module):
+    """Dynamic neural network model with intelligence injection capability"""
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
-        self.layers = nn.ModuleList()
-        self._build_architecture()
-        self.memory = [] if config.flywheel else None
+        self.memory = []
+        self.layers = nn.ModuleList(self._build_architecture())
         
-    def _build_architecture(self):
-        """Dynamically build model architecture based on config"""
-        arch_parts = self.config.architecture.split("->")
-        in_features = None
+        # Initialize flywheel if not provided
+        if self.config.flywheel is None:
+            self.config.flywheel = FlywheelConfig()
         
-        for part in arch_parts:
+    def _build_architecture(self) -> List[nn.Module]:
+        """Build model architecture from string definition"""
+        layers = []
+        parts = self.config.architecture.split("->")
+        
+        # Input size from first part (e.g., "x5" -> 5)
+        input_size = int(parts[0].strip().replace("x", ""))
+        current_size = input_size
+        
+        # Process each layer definition
+        for part in parts[1:]:
             part = part.strip()
-            if "x" in part:  # For input layer specification
-                in_features = int(part.split("x")[1])
-                continue
-                
-            if part.startswith("Linear"):
-                out_features = int(part.split("(")[1].rstrip(")"))
-                if in_features is None:
-                    raise ValueError("Input features not specified")
-                self.layers.append(nn.Linear(in_features, out_features))
-                in_features = out_features
+            if "Linear" in part:
+                size = int(part.split("(")[1].split(")")[0])
+                layers.append(nn.Linear(current_size, size))
+                current_size = size
             elif part == "ReLU":
-                self.layers.append(nn.ReLU())
+                layers.append(nn.ReLU())
             elif part == "Tanh":
-                self.layers.append(nn.Tanh())
+                layers.append(nn.Tanh())
             elif part == "Sigmoid":
-                self.layers.append(nn.Sigmoid())
-    
+                layers.append(nn.Sigmoid())
+            
+        return layers
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Basic forward pass
         for layer in self.layers:
@@ -69,7 +100,7 @@ class DynamicModel(nn.Module):
             x = self._apply_intelligence(x)
             
         return x
-    
+        
     def _apply_intelligence(self, x: torch.Tensor) -> torch.Tensor:
         """Apply learned patterns from memory to current output"""
         if not self.memory:
@@ -91,7 +122,12 @@ class DynamicModel(nn.Module):
             
         return enhanced_output
 
+########################
+# Model Handler
+########################
+
 class ModelHandler:
+    """Handles model creation and execution in various modes"""
     def __init__(self):
         self.models: Dict[str, DynamicModel] = {}
     
