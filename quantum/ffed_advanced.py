@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional, List, Tuple
 import torch
 import numpy as np
-from sequence.components.memory import MemoryArray
+from .sequence_integration import MemoryArray
 from .ffed_core import FractionFibonacciEllipticDerivative
 
 class PhiQuantumFramework:
