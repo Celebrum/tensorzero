@@ -1,3 +1,24 @@
+# Copyright (c) 2024 Jean-Sebastien Beaulieu
+# All rights reserved.
+
+# This License Agreement ("Agreement") is between you and Jean-Sebastien Beaulieu
+# regarding the use of the FFeD (Fractal Fibonacci Elliptic Derivative) Framework
+# within TensorZero.
+
+# The FFeD Framework and its associated quantum harmonic implementation, including
+# but not limited to:
+# - Phi-scaled quantum circuits
+# - Harmonic pattern recognition
+# - Quantum state manipulation through golden ratio principles
+# - Neutrosophic logic implementations
+# are protected intellectual property.
+
+# Commercial use requires explicit written permission from the author.
+# Research and educational use is permitted with proper attribution.
+
+# Required Attribution Format:
+# "FFeD Framework developed by Jean-Sebastien Beaulieu (2024)"
+
 from typing import Dict, Any, List, Optional, Tuple
 import torch
 import numpy as np
