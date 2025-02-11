@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import subprocess
 from dataclasses import dataclass
+from .environment_templates import generate_environment_config, detect_model_type
 
 @dataclass
 class ModelRequirements:
@@ -21,57 +22,34 @@ class ModelEnvironmentManager:
         
     def evaluate_model_requirements(self, model_config: Dict) -> ModelRequirements:
         """Analyze model configuration and determine requirements"""
-        requirements = ModelRequirements(
-            python_version="3.10",  # Default Python version
-            dependencies=[],
-            conda_packages=[],
-            pip_packages=[]
+        # Detect model type and get base requirements
+        model_type = detect_model_type(model_config.get("architecture", ""))
+        env_config = generate_environment_config(
+            model_config.get("name", "unnamed"),
+            model_config.get("architecture", "")
         )
         
-        # Analyze architecture for requirements
-        arch = model_config.get("architecture", "")
-        if "transformer" in arch.lower():
-            requirements.pip_packages.extend(["transformers", "tokenizers"])
-        if "bert" in arch.lower():
-            requirements.pip_packages.extend(["bert-tensorflow", "tensorflow"])
-        if "gpu" in arch.lower() or model_config.get("gpu_required", False):
+        requirements = ModelRequirements(
+            python_version=env_config.get("dependencies", ["python=3.10"])[0].split("=")[1],
+            dependencies=[],
+            conda_packages=[dep for dep in env_config.get("dependencies", []) if isinstance(dep, str)],
+            pip_packages=env_config.get("dependencies", [{}])[-1].get("pip", [])
+        )
+        
+        # Add GPU requirements if needed
+        if (model_config.get("gpu_required", False) or 
+            env_config.get("variables", {}).get("GPU_RECOMMENDED", "false") == "true"):
             requirements.cuda_required = True
             requirements.conda_packages.append("cudatoolkit")
         
-        # Add base requirements
-        requirements.conda_packages.extend([
-            "pytorch",
-            "numpy",
-            "pandas",
-            "panel",
-            "param"
-        ])
-        
-        # Add memory requirement based on model size
-        model_size = model_config.get("model_size", "small")
-        if model_size == "large":
-            requirements.memory_requirement = "16GB"
-        elif model_size == "medium":
-            requirements.memory_requirement = "8GB"
+        # Set memory requirement
+        requirements.memory_requirement = env_config.get("variables", {}).get("MEMORY_REQ", "4GB")
             
         return requirements
     
     def create_environment_file(self, model_name: str, requirements: ModelRequirements) -> Path:
         """Create a conda environment.yml file for specific model requirements"""
-        env_config = {
-            "name": f"tensorzero_{model_name}",
-            "channels": ["conda-forge", "defaults"],
-            "dependencies": [
-                f"python={requirements.python_version}",
-                "pip",
-                *requirements.conda_packages,
-                {"pip": requirements.pip_packages}
-            ]
-        }
-        
-        # Add CUDA if required
-        if requirements.cuda_required:
-            env_config["dependencies"].append("cudatoolkit")
+        env_config = generate_environment_config(model_name, requirements)
         
         env_file = self.base_env_path / f"{model_name}_environment.yml"
         with env_file.open("w") as f:
@@ -85,24 +63,29 @@ class ModelEnvironmentManager:
         env_file = self.create_environment_file(model_name, requirements)
         env_name = f"tensorzero_{model_name}"
         
-        # Create conda environment
-        try:
-            subprocess.run([
-                "conda", "env", "create",
-                "-f", str(env_file),
-                "-n", env_name
-            ], check=True)
+        # Check if environment already exists
+        result = subprocess.run(["conda", "env", "list"], capture_output=True, text=True)
+        if env_name in result.stdout:
+            print(f"Environment {env_name} already exists, updating...")
+            update_cmd = ["conda", "env", "update", "-n", env_name, "-f", str(env_file)]
+            subprocess.run(update_cmd, check=True)
+        else:
+            # Create new environment
+            create_cmd = ["conda", "env", "create", "-f", str(env_file)]
+            subprocess.run(create_cmd, check=True)
+        
+        # Install additional dependencies
+        with subprocess.Popen(
+            f"conda run -n {env_name} pip install -r requirements.txt",
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        ) as proc:
+            stdout, stderr = proc.communicate()
+            if proc.returncode != 0:
+                print(f"Warning: pip install returned {proc.returncode}: {stderr.decode()}")
             
-            # Install additional dependencies if needed
-            subprocess.run([
-                "conda", "run",
-                "-n", env_name,
-                "pip", "install", "-r", "requirements.txt"
-            ], check=True)
-            
-            return env_name
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to create environment for model {model_name}: {str(e)}")
+        return env_name
     
     def activate_model_environment(self, model_name: str) -> None:
         """Activate the conda environment for a specific model"""
