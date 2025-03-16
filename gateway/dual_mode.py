@@ -60,14 +60,21 @@ class PatternRecognition:
         y_mean = data.mean(dim=0)
         
         # Calculate R² score
+        numerator = torch.sum((x.unsqueeze(1) - x_mean) * (data - y_mean), dim=0)
+        denominator = torch.sqrt(torch.sum((x.unsqueeze(1) - x_mean)**2, dim=0) * 
+                               torch.sum((data - y_mean)**2, dim=0))
         r2 = (numerator / denominator)**2
         
         return r2.mean().item()
+        
+    def initialize_index(self):
+        if self.hippocampal_index is None:
+            self.hippocampal_index = torch.zeros(0, self.embedding_dim)
 
 class DualModeGateway:
     def __init__(self, config_path: str):
         self.model_handler = ModelHandler()
-        self.mode = GatewayMode.HYBRID
+        self.mode = GatewayMode.HIPPOCAMPAL  # Set default mode to hippocampal
         self.load_config(config_path)
         self.pattern_recognition = PatternRecognition(self.config)
         
@@ -77,8 +84,10 @@ class DualModeGateway:
         mode: GatewayMode,
         config: Optional[Dict[str, Any]] = None
     ):
-        """Create model in either simple or expert mode"""
-        if mode == GatewayMode.SIMPLE:
+        """Create model in either simple, expert, or hippocampal mode"""
+        if mode == GatewayMode.HIPPOCAMPAL:
+            return await self._create_hippocampal_model(name, config)
+        elif mode == GatewayMode.SIMPLE:
             return await self._create_simple_model(name, config)
         else:
             return await self._create_expert_model(name, config)
@@ -123,6 +132,18 @@ class DualModeGateway:
             )
         )
         return self.model_handler.create_model(model_config)
+        
+    async def _create_hippocampal_model(self, name: str, config: Optional[Dict[str, Any]] = None):
+        """Create a model with HippoRAG integration"""
+        config = config or {}
+        config["hippo_config"] = {
+            "network_mode": "hippocampus",
+            "embedding_type": "HippoRAG",
+            "memory_index": True,
+            "index_strategy": "neurobiological"
+        }
+        self.pattern_recognition.initialize_index()
+        return await self.model_handler.create_model(name, config)
 
     async def inference(
         self,
