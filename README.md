@@ -277,7 +277,7 @@ _More coming soon..._
 > **[Dynamic in-context learning (DICL)](https://www.tensorzero.com/docs/gateway/guides/inference-time-optimizations#dynamic-in-context-learning-dicl)** is a powerful inference-time optimization available out of the box with TensorZero.
 > It enhances LLM performance by automatically incorporating relevant historical examples into the prompt, without the need for model fine-tuning.
 
-https://github.com/user-attachments/assets/4df1022e-886e-48c2-8f79-6af3cdad79cb
+<https://github.com/user-attachments/assets/4df1022e-886e-48c2-8f79-6af3cdad79cb>
 
 ## LLM Engineering with TensorZero
 
