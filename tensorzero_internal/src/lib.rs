@@ -17,3 +17,23 @@ mod testing;
 pub mod tool; // types and methods for working with TensorZero tools
 mod uuid_util; // utilities for working with UUIDs
 mod variant; // types and methods for working with TensorZero variants
+pub mod neural_forecasting;
+pub mod shared;
+
+use crate::neural_forecasting::NeuralForecastManager;
+
+pub struct Gateway {
+    // ...existing fields...
+    pub neural_forecast_manager: NeuralForecastManager,
+}
+
+impl Gateway {
+    pub fn new() -> Self {
+        Self {
+            // ...existing fields...
+            neural_forecast_manager: NeuralForecastManager::new(),
+        }
+    }
+
+    // ...existing methods...
+}
