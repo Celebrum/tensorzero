@@ -41,6 +41,8 @@ axum = { workspace = true }
 backon = { version = "1.2.0", features = ["tokio-sleep"] }
 blake3 = "1.5.5"
 bytes = "1.6.1"
+chrono = { version = "0.4.31", features = ["serde"] }
+clickhouse = { version = "0.11.6", features = ["uuid"] }
 derive_builder = "0.20.0"
 futures = { workspace = true}
 futures-core = "0.3.30"
@@ -63,17 +65,17 @@ minijinja = { version = "2.1.0", features = [
 ] }
 mindsdb-sdk = "0.1.0"
 rand = "0.8.5"
-reqwest = { workspace = true }
+reqwest = { workspace = true, version = "0.11.23", features = ["json"] }
 reqwest-eventsource = { workspace = true }
 secrecy = { workspace = true }
-serde = { workspace = true}
-serde_json = { workspace = true }
+serde = { workspace = true, version = "1.0.195", features = ["derive"] }
+serde_json = { workspace = true, version = "1.0.111" }
 serde_path_to_error = "0.1.16"
 sha2 = "0.10.8"
 strum = { version = "0.26.3", features = ["derive"] }
 strum_macros = "0.26.3"
 tokio = { version = "1.38.1", features = ["full"] }
-tokio-stream = { workspace = true }
+tokio-stream = { workspace = true, version = "0.1.14" }
 toml = "0.8.15"
 tracing = { version = "0.1.40", features = ["log", "release_max_level_debug"] }
 tracing-subscriber = { version = "0.3.18", features = [
@@ -82,7 +84,7 @@ tracing-subscriber = { version = "0.3.18", features = [
     "json",
 ] }
 url = { workspace = true, features = ["serde"] }
-uuid = { workspace = true }
+uuid = { workspace = true, version = "1.6.1", features = ["v7"] }
 
 
 [dev-dependencies]

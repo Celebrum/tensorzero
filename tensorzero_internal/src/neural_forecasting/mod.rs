@@ -195,6 +195,74 @@ impl NeuralForecastManager {
             })
             .collect()
     }
+
+    pub async fn get_recent_forecasts_with_max_age(
+        &self,
+        model_id: Uuid,
+        limit: usize,
+        max_age: chrono::Duration,
+    ) -> Result<Vec<(DateTime<Utc>, f64, f64)>, Error> {
+        let query = format!(
+            r#"
+            SELECT
+                timestamp,
+                predicted_value,
+                confidence
+            FROM TimeSeriesForecast
+            WHERE model_id = '{}'
+                AND timestamp >= subtractSeconds(now(), {})
+            ORDER BY timestamp DESC
+            LIMIT {}
+            FORMAT JSONEachRow
+            "#,
+            model_id, max_age.num_seconds(), limit
+        );
+
+        let result = self.clickhouse.run_query(query, None).await?;
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&result).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!("Failed to deserialize forecasts: {}", e),
+            })
+        })?;
+
+        rows.into_iter()
+            .map(|row| {
+                let timestamp = DateTime::parse_from_rfc3339(
+                    row["timestamp"]
+                        .as_str()
+                        .ok_or_else(|| {
+                            Error::new(ErrorDetails::Serialization {
+                                message: "Missing timestamp in forecast".to_string(),
+                            })
+                        })?,
+                )
+                .map_err(|e| {
+                    Error::new(ErrorDetails::Serialization {
+                        message: format!("Failed to parse timestamp: {}", e),
+                    })
+                })?
+                .with_timezone(&Utc);
+
+                let value = row["predicted_value"]
+                    .as_f64()
+                    .ok_or_else(|| {
+                        Error::new(ErrorDetails::Serialization {
+                            message: "Missing predicted_value in forecast".to_string(),
+                        })
+                    })?;
+
+                let confidence = row["confidence"]
+                    .as_f64()
+                    .ok_or_else(|| {
+                        Error::new(ErrorDetails::Serialization {
+                            message: "Missing confidence in forecast".to_string(),
+                        })
+                    })?;
+
+                Ok((timestamp, value, confidence))
+            })
+            .collect()
+    }
 }
 
 impl Default for NeuralForecastManager {
