@@ -38,3 +38,4 @@ credentials/
 # Node
 node_modules/
 **/.eslintcache
+.qodo
