@@ -4,7 +4,7 @@ use crate::{
 };
 
 pub mod migration_0000;
-// pub mod migration_0001;
+pub mod migration_0001;
 pub mod migration_0002;
 pub mod migration_0003;
 pub mod migration_0004;
@@ -15,6 +15,7 @@ pub mod migration_0008;
 pub mod migration_0009;
 pub mod migration_0010;
 pub mod migration_0011;
+pub mod migration_0012;
 
 /// Returns true if the table exists, false if it does not
 /// Errors if the query fails

@@ -1,0 +1,10 @@
+{
+  "prediction": [25.3, 26.1, 27.4, 26.8, 28.2, 27.9, 29.1],
+  "confidence": 0.89,
+  "model_info": {
+    "name": "test_forecast_model",
+    "target_column": "value",
+    "history_window": 30,
+    "forecast_horizon": 7
+  }
+}

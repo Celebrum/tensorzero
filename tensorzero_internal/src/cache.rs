@@ -6,7 +6,7 @@ use crate::inference::types::batch::deserialize_json_string;
 use crate::inference::types::{ContentBlock, ModelInferenceRequest, ModelInferenceResponse};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheEnabledMode {
     On,
@@ -79,6 +79,27 @@ impl CacheKey {
 
     pub fn get_long_key(&self) -> String {
         hex::encode(self.0)
+    }
+
+    pub fn from_neural_data(
+        model_name: &str,
+        provider_name: &str,
+        target_column: &str,
+        history_window: u32,
+        data_hash: &[u8],
+    ) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"neural:"); // Prefix to distinguish from other cache types
+        hasher.update(model_name.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(provider_name.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(target_column.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(&history_window.to_le_bytes());
+        hasher.update(&[0]);
+        hasher.update(data_hash);
+        CacheKey(hasher.finalize().into())
     }
 }
 
@@ -170,6 +191,126 @@ pub struct CacheLookupResult {
 }
 
 pub async fn cache_lookup(
+    clickhouse_connection_info: &ClickHouseConnectionInfo,
+    request: ModelProviderRequest<'_>,
+    max_age_s: Option<u32>,
+) -> Result<Option<ModelInferenceResponse>, Error> {
+    match request.request.function_type {
+        InferenceType::Neural => neural_cache_lookup(
+            clickhouse_connection_info,
+            request,
+            max_age_s,
+        ).await,
+        _ => standard_cache_lookup(
+            clickhouse_connection_info,
+            request,
+            max_age_s,
+        ).await,
+    }
+}
+
+async fn neural_cache_lookup(
+    clickhouse_connection_info: &ClickHouseConnectionInfo,
+    request: ModelProviderRequest<'_>,
+    max_age_s: Option<u32>,
+) -> Result<Option<ModelInferenceResponse>, Error> {
+    let input_data: Vec<serde_json::Value> = serde_json::from_str(request.request.input)?;
+    let target_column = request.request.output_schema
+        .clone()
+        .unwrap_or_else(|| "target".to_string());
+    
+    // Create a hash of the input data for cache key
+    let mut data_hasher = blake3::Hasher::new();
+    for point in &input_data {
+        data_hasher.update(point.to_string().as_bytes());
+    }
+    let data_hash = data_hasher.finalize();
+    
+    // Get history window from request params or default
+    let history_window = request.request.inference_params
+        .get("history_window")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30) as u32;
+
+    let cache_key = CacheKey::from_neural_data(
+        request.model_name,
+        request.provider_name,
+        &target_column,
+        history_window,
+        data_hash.as_bytes(),
+    );
+
+    let query = if max_age_s.is_some() {
+        r#"
+            SELECT
+                prediction,
+                confidence,
+                raw_request,
+                raw_response,
+                model_name,
+                model_provider_name
+            FROM ModelInferenceCache
+            WHERE short_cache_key = {short_cache_key:UInt64}
+                AND long_cache_key = {long_cache_key:String}
+                AND timestamp > subtractSeconds(now(), {lookback_s:UInt32})
+            ORDER BY timestamp DESC
+            LIMIT 1
+            FORMAT JSONEachRow
+        "#
+    } else {
+        r#"
+            SELECT
+                prediction,
+                confidence,
+                raw_request,
+                raw_response,
+                model_name,
+                model_provider_name
+            FROM ModelInferenceCache
+            WHERE short_cache_key = {short_cache_key:UInt64}
+                AND long_cache_key = {long_cache_key:String}
+            ORDER BY timestamp DESC
+            LIMIT 1
+            FORMAT JSONEachRow
+        "#
+    };
+
+    let short_cache_key = cache_key.get_short_key()?.to_string();
+    let long_cache_key = cache_key.get_long_key();
+
+    let mut query_params = HashMap::from([
+        ("short_cache_key", short_cache_key.as_str()),
+        ("long_cache_key", long_cache_key.as_str()),
+    ]);
+
+    let lookback_str;
+    if let Some(lookback) = max_age_s {
+        lookback_str = lookback.to_string();
+        query_params.insert("lookback_s", lookback_str.as_str());
+    }
+
+    let result = clickhouse_connection_info
+        .run_query(query.to_string(), Some(&query_params))
+        .await?;
+
+    if result.is_empty() {
+        return Ok(None);
+    }
+
+    let cached: CacheLookupResult = serde_json::from_str(&result).map_err(|e| {
+        Error::new(ErrorDetails::Cache {
+            message: format!("Failed to deserialize neural forecast cache result: {}", e),
+        })
+    })?;
+
+    Ok(Some(ModelInferenceResponse::from_cache(
+        cached,
+        request.request,
+        request.provider_name,
+    )))
+}
+
+async fn standard_cache_lookup(
     clickhouse_connection_info: &ClickHouseConnectionInfo,
     request: ModelProviderRequest<'_>,
     max_age_s: Option<u32>,

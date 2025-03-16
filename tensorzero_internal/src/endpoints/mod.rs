@@ -8,6 +8,18 @@ pub mod feedback;
 pub mod inference;
 pub mod openai_compatible;
 pub mod status;
+pub mod neural_forecast;
+
+use crate::Gateway;
+use axum::Router;
+use std::sync::Arc;
+
+pub fn router() -> Router<Arc<Gateway>> {
+    Router::new()
+        .nest("/feedback", feedback::router())
+        .nest("/inference", inference::router())
+        .nest("/neural-forecast", neural_forecast::router())
+}
 
 fn validate_tags(tags: &HashMap<String, String>) -> Result<(), Error> {
     for tag_name in tags.keys() {

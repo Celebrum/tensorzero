@@ -25,6 +25,7 @@ use crate::{
     tool::{ToolCall, ToolCallChunk, ToolCallConfig, ToolCallOutput, ToolResult},
 };
 use crate::{jsonschema_util::DynamicJSONSchema, tool::ToolCallConfigDatabaseInsert};
+use crate::clickhouse::ClickHouseConnectionInfo;
 
 pub mod batch;
 
@@ -122,6 +123,14 @@ pub enum ModelInferenceRequestJsonMode {
     Strict,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceType {
+    Chat,
+    Json,
+    Neural,
+}
+
 /// Top-level TensorZero type for an inference request to a particular model.
 /// This should contain all the information required to make a valid inference request
 /// for a provider, except for information about what model to actually request,
@@ -145,6 +154,81 @@ pub struct ModelInferenceRequest<'a> {
     pub json_mode: ModelInferenceRequestJsonMode,
     pub function_type: FunctionType,
     pub output_schema: Option<&'a Value>,
+}
+
+impl<'a> ModelInferenceRequest<'a> {
+    pub fn validate(&self) -> Result<(), Error> {
+        match self.function_type {
+            InferenceType::Chat => self.validate_chat(),
+            InferenceType::Json => self.validate_json(),
+            InferenceType::Neural => self.validate_neural(),
+        }
+    }
+
+    fn validate_chat(&self) -> Result<(), Error> {
+        // ...existing validation...
+    }
+
+    fn validate_json(&self) -> Result<(), Error> {
+        // ...existing validation...
+    }
+
+    fn validate_neural(&self) -> Result<(), Error> {
+        // For neural forecasting, we need:
+        // 1. A valid JSON array input with timestamp and value fields
+        // 2. A target column name in output_schema
+        // 3. ClickHouse connection for storing results
+
+        let input_data: Vec<serde_json::Value> = serde_json::from_str(self.input).map_err(|e| {
+            Error::new(ErrorDetails::InvalidInput {
+                message: format!("Neural forecasting input must be a valid JSON array: {}", e),
+            })
+        })?;
+
+        if input_data.is_empty() {
+            return Err(Error::new(ErrorDetails::InvalidInput {
+                message: "Neural forecasting input array cannot be empty".to_string(),
+            }));
+        }
+
+        // Validate each data point has required fields
+        for (i, point) in input_data.iter().enumerate() {
+            if !point.is_object() {
+                return Err(Error::new(ErrorDetails::InvalidInput {
+                    message: format!("Data point at index {} must be an object", i),
+                }));
+            }
+
+            let obj = point.as_object().unwrap();
+            if !obj.contains_key("timestamp") {
+                return Err(Error::new(ErrorDetails::InvalidInput {
+                    message: format!("Data point at index {} missing 'timestamp' field", i),
+                }));
+            }
+
+            if !obj.contains_key("value") {
+                return Err(Error::new(ErrorDetails::InvalidInput {
+                    message: format!("Data point at index {} missing 'value' field", i),
+                }));
+            }
+        }
+
+        // Validate output schema (target column) is provided
+        if self.output_schema.is_none() {
+            return Err(Error::new(ErrorDetails::InvalidInput {
+                message: "Neural forecasting requires a target column name in output_schema".to_string(),
+            }));
+        }
+
+        // Validate ClickHouse connection is available
+        if self.clickhouse.is_none() {
+            return Err(Error::new(ErrorDetails::InvalidInput {
+                message: "Neural forecasting requires a ClickHouse connection for storing results".to_string(),
+            }));
+        }
+
+        Ok(())
+    }
 }
 
 /// Each provider transforms a ModelInferenceRequest into a provider-specific (private) inference request type

@@ -10,7 +10,7 @@ use crate::endpoints::inference::InferenceParams;
 use crate::error::{Error, ErrorDetails};
 use crate::inference::types::{
     ChatInferenceResult, ContentBlock, InferenceResult, Input, InputMessageContent,
-    JsonInferenceResult, ModelInferenceResponseWithMetadata, Role, Usage,
+    JsonInferenceResult, ModelInferenceResponseWithMetadata, Role, Usage, NeuralInferenceResult, NeuralInferenceOutput, InferenceType,
 };
 use crate::jsonschema_util::{JSONSchemaFromPath, JsonSchemaRef};
 use crate::minijinja_util::TemplateConfig;
@@ -18,16 +18,19 @@ use crate::model::ModelTable;
 use crate::tool::{DynamicToolParams, StaticToolConfig, ToolCallConfig, ToolChoice};
 use crate::variant::{InferenceConfig, Variant, VariantConfig};
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type")]
 pub enum FunctionConfig {
     Chat(FunctionConfigChat),
     Json(FunctionConfigJson),
+    Neural(FunctionConfigNeural),
 }
 
 #[derive(Copy, Clone, Debug)]
 pub enum FunctionConfigType {
     Chat,
     Json,
+    Neural,
 }
 
 impl FunctionConfig {
@@ -35,6 +38,7 @@ impl FunctionConfig {
         match self {
             FunctionConfig::Chat(_) => FunctionConfigType::Chat,
             FunctionConfig::Json(_) => FunctionConfigType::Json,
+            FunctionConfig::Neural(_) => FunctionConfigType::Neural,
         }
     }
 }
@@ -60,11 +64,20 @@ pub struct FunctionConfigJson {
     pub implicit_tool_call_config: ToolCallConfig,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FunctionConfigNeural {
+    pub variants: HashMap<String, VariantConfig>,
+    pub history_window: Option<u32>,
+    pub forecast_horizon: Option<u32>,
+    pub target_column: Option<String>,
+}
+
 impl FunctionConfig {
     pub fn variants(&self) -> &HashMap<String, VariantConfig> {
         match self {
             FunctionConfig::Chat(params) => &params.variants,
             FunctionConfig::Json(params) => &params.variants,
+            FunctionConfig::Neural(params) => &params.variants,
         }
     }
 }
@@ -93,6 +106,9 @@ impl FunctionConfig {
                     params.assistant_schema.as_ref(),
                     input,
                 )?;
+            }
+            FunctionConfig::Neural(_) => {
+                // No specific validation for neural functions yet
             }
         }
         Ok(())
@@ -137,6 +153,33 @@ impl FunctionConfig {
                 if dynamic_tool_params.parallel_tool_calls.is_some() {
                     return Err(ErrorDetails::InvalidRequest {
                         message: "Cannot pass `parallel_tool_calls` to a JSON function".to_string(),
+                    }
+                    .into());
+                }
+                Ok(None)
+            }
+            FunctionConfig::Neural(_) => {
+                if dynamic_tool_params.allowed_tools.is_some() {
+                    return Err(ErrorDetails::InvalidRequest {
+                        message: "Cannot pass `allowed_tools` to a Neural function.".to_string(),
+                    }
+                    .into());
+                }
+                if dynamic_tool_params.additional_tools.is_some() {
+                    return Err(ErrorDetails::InvalidRequest {
+                        message: "Cannot pass `additional_tools` to a Neural function.".to_string(),
+                    }
+                    .into());
+                }
+                if dynamic_tool_params.tool_choice.is_some() {
+                    return Err(ErrorDetails::InvalidRequest {
+                        message: "Cannot pass `tool_choice` to a Neural function".to_string(),
+                    }
+                    .into());
+                }
+                if dynamic_tool_params.parallel_tool_calls.is_some() {
+                    return Err(ErrorDetails::InvalidRequest {
+                        message: "Cannot pass `parallel_tool_calls` to a Neural function".to_string(),
                     }
                     .into());
                 }
@@ -219,6 +262,27 @@ impl FunctionConfig {
                     inference_params,
                 )))
             }
+            FunctionConfig::Neural(neural_config) => {
+                // For neural forecasting, convert time series prediction output
+                let output = serde_json::to_string(&content_blocks).map_err(|e| {
+                    Error::new(ErrorDetails::Serialization {
+                        message: format!("Failed to serialize neural forecast output: {}", e),
+                    })
+                })?;
+
+                Ok(InferenceResult::Neural(NeuralInferenceResult {
+                    inference_id,
+                    created: crate::inference::types::current_timestamp(),
+                    output: NeuralInferenceOutput {
+                        raw: output,
+                        predictions: content_blocks,
+                    },
+                    usage,
+                    model_inference_results,
+                    target_column: neural_config.target_column.clone(),
+                    inference_params,
+                }))
+            }
         }
     }
 
@@ -226,6 +290,7 @@ impl FunctionConfig {
         match self {
             FunctionConfig::Chat(params) => params.system_schema.as_ref(),
             FunctionConfig::Json(params) => params.system_schema.as_ref(),
+            FunctionConfig::Neural(_) => None,
         }
     }
 
@@ -233,6 +298,7 @@ impl FunctionConfig {
         match self {
             FunctionConfig::Chat(params) => params.user_schema.as_ref(),
             FunctionConfig::Json(params) => params.user_schema.as_ref(),
+            FunctionConfig::Neural(_) => None,
         }
     }
 
@@ -240,6 +306,7 @@ impl FunctionConfig {
         match self {
             FunctionConfig::Chat(params) => params.assistant_schema.as_ref(),
             FunctionConfig::Json(params) => params.assistant_schema.as_ref(),
+            FunctionConfig::Neural(_) => None,
         }
     }
 
@@ -281,6 +348,7 @@ impl FunctionConfig {
                 Ok(())
             }
             FunctionConfig::Json(_) => Ok(()),
+            FunctionConfig::Neural(_) => Ok(()),
         }
     }
 }
@@ -460,6 +528,23 @@ fn get_uniform_value(function_name: &str, episode_id: &Uuid) -> f64 {
     let truncated_hash =
         u32::from_be_bytes([hash_value[0], hash_value[1], hash_value[2], hash_value[3]]);
     truncated_hash as f64 / u32::MAX as f64
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NeuralInferenceResult {
+    pub inference_id: Uuid,
+    pub created: u64,
+    pub output: NeuralInferenceOutput,
+    pub usage: Usage,
+    pub model_inference_results: Vec<ModelInferenceResponseWithMetadata>,
+    pub target_column: Option<String>,
+    pub inference_params: InferenceParams,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NeuralInferenceOutput {
+    pub raw: String,
+    pub predictions: Vec<ContentBlock>,
 }
 
 #[cfg(test)]
@@ -1112,6 +1197,309 @@ mod tests {
             system: Some(json!({ "name": "system name" })),
             messages,
         };
+
+        assert!(function_config.validate_input(&input).is_ok());
+    }
+
+    #[test]
+    fn test_validate_input_json_no_schema() {
+        let output_schema = json!({});
+        let implicit_tool_call_config = ToolCallConfig::implicit_from_value(&output_schema);
+        let tool_config = FunctionConfigJson {
+            variants: HashMap::new(),
+            system_schema: None,
+            user_schema: None,
+            assistant_schema: None,
+            output_schema: JSONSchemaFromPath::from_value(&json!({})).unwrap(),
+            implicit_tool_call_config,
+        };
+        let function_config = FunctionConfig::Json(tool_config);
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec!["user content".to_string().into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec!["assistant content".to_string().into()],
+            },
+        ];
+
+        let input = Input {
+            system: Some(json!("system content")),
+            messages,
+        };
+
+        assert!(function_config.validate_input(&input).is_ok());
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec![json!({ "name": "user name" }).into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec![json!({ "name": "assistant name" }).into()],
+            },
+        ];
+
+        let input = Input {
+            system: Some(json!("system content")),
+            messages,
+        };
+
+        let validation_result = function_config.validate_input(&input);
+        assert_eq!(
+            validation_result.unwrap_err(),
+            ErrorDetails::InvalidMessage {
+                message: "Message at index 0 has non-string content but there is no schema given for role user.".to_string()
+            }.into()
+        );
+    }
+
+    #[test]
+    fn test_validate_input_json_system_schema() {
+        let system_schema = create_test_schema();
+        let system_value = system_schema.value.clone();
+        let output_schema = json!({});
+        let implicit_tool_call_config = ToolCallConfig::implicit_from_value(&output_schema);
+        let tool_config = FunctionConfigJson {
+            variants: HashMap::new(),
+            system_schema: Some(system_schema),
+            user_schema: None,
+            assistant_schema: None,
+            output_schema: JSONSchemaFromPath::from_value(&output_schema).unwrap(),
+            implicit_tool_call_config,
+        };
+        let function_config = FunctionConfig::Json(tool_config);
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec!["user content".to_string().into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec![json!("assistant content").to_string().into()],
+            },
+        ];
+
+        let input = Input {
+            system: Some(json!("system content")),
+            messages,
+        ];
+
+        let validation_result = function_config.validate_input(&input);
+        assert_eq!(
+            validation_result.unwrap_err(),
+            ErrorDetails::JsonSchemaValidation {
+                messages: vec!["\"system content\" is not of type \"object\"".to_string()],
+                data: Box::new(json!("system content")),
+                schema: Box::new(system_value),
+            }
+            .into()
+        );
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec!["user content".to_string().into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec![json!("assistant content").to_string().into()],
+            },
+        ];
+
+        let input = Input {
+            system: Some(json!({ "name": "system name" })),
+            messages,
+        };
+
+        assert!(function_config.validate_input(&input).is_ok());
+    }
+
+    #[test]
+    fn test_validate_input_json_user_schema() {
+        let user_schema = create_test_schema();
+        let user_value = user_schema.value.clone();
+        let output_schema = json!({});
+        let implicit_tool_call_config = ToolCallConfig::implicit_from_value(&output_schema);
+        let tool_config = FunctionConfigJson {
+            variants: HashMap::new(),
+            system_schema: None,
+            user_schema: Some(user_schema),
+            assistant_schema: None,
+            output_schema: JSONSchemaFromPath::from_value(&output_schema).unwrap(),
+            implicit_tool_call_config,
+        };
+        let function_config = FunctionConfig::Json(tool_config);
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec!["user content".to_string().into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec![json!("assistant content").to_string().into()],
+            },
+        ];
+
+        let input = Input {
+            system: Some(json!("system content")),
+            messages,
+        ];
+
+        let validation_result = function_config.validate_input(&input);
+        assert_eq!(
+            validation_result.unwrap_err(),
+            ErrorDetails::JsonSchemaValidation {
+                messages: vec!["\"user content\" is not of type \"object\"".to_string()],
+                data: Box::new(json!("user content")),
+                schema: Box::new(user_value),
+            }
+            .into()
+        );
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec![json!({ "name": "user name" }).into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec!["assistant content".to_string().into()],
+            },
+        ];
+        let input = Input {
+            system: Some(json!("system content")),
+            messages,
+        };
+
+        assert!(function_config.validate_input(&input).is_ok());
+    }
+
+    #[test]
+    fn test_validate_input_json_assistant_schema() {
+        let assistant_schema = create_test_schema();
+        let assistant_value = assistant_schema.value.clone();
+        let output_schema = json!({});
+        let implicit_tool_call_config = ToolCallConfig::implicit_from_value(&output_schema);
+        let tool_config = FunctionConfigJson {
+            variants: HashMap::new(),
+            system_schema: None,
+            user_schema: None,
+            assistant_schema: Some(assistant_schema),
+            output_schema: JSONSchemaFromPath::from_value(&output_schema).unwrap(),
+            implicit_tool_call_config,
+        };
+        let function_config = FunctionConfig::Json(tool_config);
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec!["user content".to_string().into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec!["assistant content".to_string().into()],
+            },
+        ];
+        let input = Input {
+            system: Some(json!("system content")),
+            messages,
+        ];
+
+        let validation_result = function_config.validate_input(&input);
+        assert_eq!(
+            validation_result.unwrap_err(),
+            ErrorDetails::JsonSchemaValidation {
+                messages: vec!["\"assistant content\" is not of type \"object\"".to_string()],
+                data: Box::new(json!("assistant content")),
+                schema: Box::new(assistant_value),
+            }
+            .into()
+        );
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec!["user content".to_string().into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec![json!({ "name": "assistant name" }).into()],
+            },
+        ];
+        let input = Input {
+            system: Some(json!("system content")),
+            messages,
+        ];
+
+        assert!(function_config.validate_input(&input).is_ok());
+    }
+
+    #[test]
+    fn test_validate_input_json_all_schemas() {
+        let system_schema = create_test_schema();
+        let user_schema = create_test_schema();
+        let assistant_schema = create_test_schema();
+        let system_value = system_schema.value.clone();
+        let output_schema = json!({});
+        let implicit_tool_call_config = ToolCallConfig::implicit_from_value(&output_schema);
+        let tool_config = FunctionConfigJson {
+            variants: HashMap::new(),
+            system_schema: Some(system_schema),
+            user_schema: Some(user_schema),
+            assistant_schema: Some(assistant_schema),
+            output_schema: JSONSchemaFromPath::from_value(&output_schema).unwrap(),
+            implicit_tool_call_config,
+        };
+        let function_config = FunctionConfig::Json(tool_config);
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec!["user content".to_string().into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec![json!("assistant content").to_string().into()],
+            },
+        ];
+        let input = Input {
+            system: Some(json!("system content")),
+            messages,
+        ];
+
+        let validation_result = function_config.validate_input(&input);
+        assert_eq!(
+            validation_result.unwrap_err(),
+            ErrorDetails::JsonSchemaValidation {
+                messages: vec!["\"system content\" is not of type \"object\"".to_string()],
+                data: Box::new(json!("system content")),
+                schema: Box::new(system_value),
+            }
+            .into()
+        );
+
+        let messages = vec![
+            InputMessage {
+                role: Role::User,
+                content: vec![json!({ "name": "user name" }).into()],
+            },
+            InputMessage {
+                role: Role::Assistant,
+                content: vec![json!({ "name": "assistant name" }).into()],
+            },
+        ];
+
+        let input = Input {
+            system: Some(json!({ "name": "system name" })),
+            messages,
+        ];
 
         assert!(function_config.validate_input(&input).is_ok());
     }
