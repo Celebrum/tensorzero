@@ -26,10 +26,22 @@ use self::mindsdb_neural::MindsDBNeuralProvider;
 #[serde(tag = "type")]
 pub enum ProviderConfig {
     MindsDB(MindsDBConfig),
+    MindsDBNeural(MindsDBNeuralConfig),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MindsDBConfig {
+    pub model_name: String,
+    #[serde(default = "default_mindsdb_url")]
+    pub url: String,
+    #[serde(default = "default_history_window")]
+    pub history_window: u32,
+    #[serde(default = "default_forecast_horizon")]
+    pub forecast_horizon: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MindsDBNeuralConfig {
     pub model_name: String,
     #[serde(default = "default_mindsdb_url")]
     pub url: String,
@@ -53,6 +65,17 @@ fn default_forecast_horizon() -> u32 {
 
 impl From<MindsDBConfig> for Box<dyn InferenceProvider> {
     fn from(config: MindsDBConfig) -> Self {
+        Box::new(MindsDBNeuralProvider {
+            model_name: config.model_name,
+            url: config.url,
+            history_window: config.history_window,
+            forecast_horizon: config.forecast_horizon,
+        })
+    }
+}
+
+impl From<MindsDBNeuralConfig> for Box<dyn InferenceProvider> {
+    fn from(config: MindsDBNeuralConfig) -> Self {
         Box::new(MindsDBNeuralProvider {
             model_name: config.model_name,
             url: config.url,

@@ -1,17 +1,23 @@
-use crate::error::{Error, ErrorDetails};
-use crate::inference::types::{
-    ModelInferenceRequest, ModelInferenceResponse, ProviderInferenceResponse,
-    ProviderInferenceResponseChunk, ProviderInferenceResponseStream,
-};
-use crate::inference::providers::provider_trait::InferenceProvider;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use async_stream::stream;
+use reqwest::Client;
+use secrecy::ExposeSecret;
+use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
-use futures::stream;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+use crate::{
+    error::{Error, ErrorDetails},
+    inference::types::{
+        batch::StartBatchProviderInferenceResponse, ContentBlock, ModelInferenceRequest,
+        ProviderInferenceResponse, ProviderInferenceResponseChunk,
+    },
+    endpoints::inference::InferenceCredentials,
+};
+
+use super::provider_trait::InferenceProvider;
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MindsDBNeuralProvider {
     pub model_name: String,
     pub url: String,
@@ -19,7 +25,7 @@ pub struct MindsDBNeuralProvider {
     pub forecast_horizon: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 struct MindsDBPredictionRequest {
     data: Vec<HashMap<String, serde_json::Value>>,
     target_column: String,
@@ -31,17 +37,6 @@ struct MindsDBPredictionResponse {
     confidence: f64,
 }
 
-impl Default for MindsDBNeuralProvider {
-    fn default() -> Self {
-        Self {
-            model_name: String::new(),
-            url: "http://localhost:47334".to_string(),
-            history_window: 30,
-            forecast_horizon: 7,
-        }
-    }
-}
-
 #[async_trait::async_trait]
 impl InferenceProvider for MindsDBNeuralProvider {
     async fn infer(
@@ -49,15 +44,15 @@ impl InferenceProvider for MindsDBNeuralProvider {
         request: &ModelInferenceRequest<'_>,
         client: &Client,
     ) -> Result<ProviderInferenceResponse, Error> {
-        // Convert input to MindsDB format
         let input_data: Vec<HashMap<String, serde_json::Value>> = serde_json::from_str(request.input)?;
+        
+        let target_column = request.output_schema.clone().unwrap_or_else(|| "target".to_string());
         
         let prediction_request = MindsDBPredictionRequest {
             data: input_data,
-            target_column: request.output_schema.clone().unwrap_or_else(|| "target".to_string()),
+            target_column: target_column.clone(),
         };
 
-        // Make prediction request to MindsDB
         let response = client
             .post(&format!("{}/api/models/{}/predict", self.url, self.model_name))
             .json(&prediction_request)
@@ -80,6 +75,26 @@ impl InferenceProvider for MindsDBNeuralProvider {
                 status_code: Some(response.status().as_u16()),
             })
         })?;
+
+        // Store the forecast in ClickHouse
+        if let Some(clickhouse) = &request.clickhouse {
+            let forecast_rows: Vec<_> = prediction.prediction.iter().enumerate().map(|(i, &value)| {
+                serde_json::json!({
+                    "id": Uuid::now_v7(),
+                    "model_id": request.inference_id,
+                    "timestamp": chrono::Utc::now() + chrono::Duration::hours(i as i64),
+                    "target_column": target_column,
+                    "predicted_value": value,
+                    "confidence": prediction.confidence
+                })
+            }).collect();
+            
+            tokio::spawn(async move {
+                if let Err(e) = clickhouse.write(&forecast_rows, "TimeSeriesForecast").await {
+                    tracing::error!("Failed to store forecast in ClickHouse: {}", e);
+                }
+            });
+        }
 
         Ok(ProviderInferenceResponse {
             output: vec![serde_json::to_string(&prediction.prediction)?.into()],
@@ -112,8 +127,8 @@ impl InferenceProvider for MindsDBNeuralProvider {
         &self,
         requests: &[ModelInferenceRequest<'_>],
         client: &Client,
-        _api_keys: &crate::endpoints::inference::InferenceCredentials,
-    ) -> Result<crate::inference::types::StartBatchProviderInferenceResponse, Error> {
+        _api_keys: &InferenceCredentials,
+    ) -> Result<StartBatchProviderInferenceResponse, Error> {
         let batch_id = Uuid::now_v7();
         
         // Process each request in the batch
@@ -125,7 +140,7 @@ impl InferenceProvider for MindsDBNeuralProvider {
             }
         }
 
-        Ok(crate::inference::types::StartBatchProviderInferenceResponse {
+        Ok(StartBatchProviderInferenceResponse {
             batch_id,
             results: results.into_iter().collect(),
         })

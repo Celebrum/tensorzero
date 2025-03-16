@@ -61,6 +61,7 @@ minijinja = { version = "2.1.0", features = [
     "loop_controls",
     "builtins",
 ] }
+mindsdb-sdk = "0.1.0"
 rand = "0.8.5"
 reqwest = { workspace = true }
 reqwest-eventsource = { workspace = true }
