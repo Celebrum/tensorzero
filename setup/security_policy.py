@@ -1,9 +1,22 @@
+from dataclasses import dataclass
+import subprocess
+
 @dataclass
 class NetworkConfig:
     ip_address: str = "10.0.0.1"
     subnet_mask: str = "255.255.255.0"
     gateway_port: int = 3000
     flywheel_port: int = 3001
+    hippocampus_port: int = 3002
+    index_port: int = 3003
+    
+    def get_hippocampus_address(self) -> str:
+        """Get the hippocampus network address"""
+        return f"{self.ip_address}:{self.hippocampus_port}"
+        
+    def get_index_address(self) -> str:
+        """Get the memory index network address"""
+        return f"{self.ip_address}:{self.index_port}"
 
 class SecurityPolicyManager:
     def __init__(self):
@@ -73,9 +86,25 @@ class SecurityPolicyManager:
     def _check_network_configuration(self) -> bool:
         try:
             result = subprocess.run(["ipconfig"], capture_output=True, text=True)
-            return self.network_config.ip_address in result.stdout
+            return (
+                self.network_config.ip_address in result.stdout and
+                self._check_port_availability(self.network_config.hippocampus_port) and
+                self._check_port_availability(self.network_config.index_port)
+            )
         except subprocess.CalledProcessError:
             return False
+            
+    def _check_port_availability(self, port: int) -> bool:
+        """Check if a network port is available"""
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind((self.network_config.ip_address, port))
+            return True
+        except:
+            return False
+        finally:
+            sock.close()
 
     def cleanup_failed_install(self):
         """Clean up any remnants of a failed installation"""

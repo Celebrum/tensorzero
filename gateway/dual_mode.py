@@ -8,12 +8,15 @@ class GatewayMode(Enum):
     SIMPLE = "simple"
     EXPERT = "expert"
     HYBRID = "hybrid"
+    HIPPOCAMPAL = "hippocampal"
 
 class PatternRecognition:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.pattern_memory = []
         self.confidence_threshold = config["pattern_recognition"]["minimum_confidence"]
+        self.embedding_dim = config.get("embedding_dim", 768)
+        self.hippocampal_index = None
         
     def detect_pattern(self, data: torch.Tensor) -> Optional[Dict[str, Any]]:
         """Detect patterns in input data"""
@@ -57,9 +60,6 @@ class PatternRecognition:
         y_mean = data.mean(dim=0)
         
         # Calculate R² score
-        numerator = torch.sum((x.unsqueeze(1) - x_mean) * (data - y_mean), dim=0)
-        denominator = torch.sqrt(torch.sum((x.unsqueeze(1) - x_mean)**2, dim=0) * 
-                               torch.sum((data - y_mean)**2, dim=0))
         r2 = (numerator / denominator)**2
         
         return r2.mean().item()
