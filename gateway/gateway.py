@@ -5,23 +5,33 @@ import mindsdb_sdk
 from asyncio import Lock
 
 class TensorZeroGateway:
-    """Main gateway class for TensorZero"""
+    """Main gateway class for TensorZero with HippoRAG integration"""
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.model_handler = ModelHandler()
         self.config = config or {}
         self._mindsdb_lock = Lock()
         self._mindsdb_clients = {}
+        self.hippo_config = {
+            "network_mode": "hippocampus",
+            "embedding_type": "HippoRAG",
+            "memory_index": True,
+            "index_strategy": "neurobiological"
+        }
         
     async def create_model(self, name: str, architecture: str, **kwargs):
-        """Create a new model with the given architecture"""
+        """Create a new model with the given architecture and HippoRAG integration"""
         config = ModelConfig(
             name=name,
             architecture=architecture,
-            params=kwargs.get('params', {}),
+            params={
+                **kwargs.get('params', {}),
+                'hippo_config': self.hippo_config
+            },
             flywheel=FlywheelConfig(
                 batch_size=kwargs.get('batch_size', 32),
                 learning_rate=kwargs.get('learning_rate', 0.001),
                 optimizer=kwargs.get('optimizer', 'adam'),
+                memory_type="hippocampal",
                 **kwargs.get('flywheel', {})
             )
         )
